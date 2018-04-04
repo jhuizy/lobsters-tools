@@ -17,29 +17,24 @@ Parameters:
     Description: ''
     NoEcho: true
     Type: String
+  StackName:
+    Description: ''
+    NoEcho: false
+    Type: String
+  TemplateConfigurationName:
+    Description: ''
+    NoEcho: false
+    Type: String
+  TemplateName:
+    Description: ''
+    NoEcho: false
+    Type: String
 Resources:
   BuildArtifactsBucket:
     Properties:
       BucketName: !Sub '${AWS::StackName}-cicd-artifacts-bucket'
     Type: AWS::S3::Bucket
-  CodeBuildDeployProject:
-    Properties:
-      Artifacts:
-        Type: CODEPIPELINE
-      Cache:
-        Location: !Sub '${BuildArtifactsBucket}/${AWS::StackName}-codebuild-deploy-cfn-cache'
-        Type: S3
-      Environment:
-        ComputeType: BUILD_GENERAL1_SMALL
-        EnvironmentVariables: []
-        Image: aws/codebuild/docker:17.09.0
-        Type: LINUX_CONTAINER
-      Name: !Sub '${AWS::StackName}-deploy-cfn-codebuild'
-      ServiceRole: !GetAtt 'CodeBuildDeployServiceRole.Arn'
-      Source:
-        Type: CODEPIPELINE
-    Type: AWS::CodeBuild::Project
-  CodeBuildDeployServiceRole:
+  CloudformationRole:
     Properties:
       AssumeRolePolicyDocument:
         Statement:
@@ -47,82 +42,27 @@ Resources:
               - sts:AssumeRole
             Effect: Allow
             Principal:
-              Service:
-                - codebuild.amazonaws.com
+              Service: cloudformation.amazonaws.com
         Version: '2012-10-17'
-      Path: /managed/
+      Path: /
       Policies:
         - PolicyDocument:
             Statement:
               - Action:
-                  - logs:CreateLogGroup
-                  - logs:CreateLogStream
-                  - logs:PutLogEvents
-                Effect: Allow
-                Resource:
-                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${AWS::StackName}-deploy-cfn-codebuild'
-                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${AWS::StackName}-deploy-cfn-codebuild:*'
-            Version: '2012-10-17'
-          PolicyName: !Sub 'codebuild-log-access-${AWS::StackName}'
-        - PolicyDocument:
-            Statement:
-              - Action:
-                  - s3:GetObject
-                  - s3:GetObjectVersion
-                  - s3:PutObject
-                Effect: Allow
-                Resource: !Sub 'arn:aws:s3:::${BuildArtifactsBucket}/*'
-            Version: '2012-10-17'
-          PolicyName: !Sub 'codebuild-s3-access-${AWS::StackName}'
-        - PolicyDocument:
-            Statement:
-              - Action:
-                  - events:PutEvents
+                  - ec2:*
                 Effect: Allow
                 Resource: '*'
             Version: '2012-10-17'
-          PolicyName: !Sub 'codebuild-notification-putevent-${AWS::StackName}'
+          PolicyName: ec2-access
         - PolicyDocument:
             Statement:
               - Action:
-                  - iam:CreateInstanceProfile
-                  - iam:DeleteInstanceProfile
-                  - iam:GetInstanceProfile
-                  - iam:UpdateAssumeRolePolicy
-                  - iam:GetRole
-                  - iam:RemoveRoleFromInstanceProfile
-                  - iam:UpdateRoleDescription
-                  - iam:ListRoles
-                  - iam:CreateRole
-                  - iam:DeleteRole
-                  - iam:AttachRolePolicy
-                  - iam:PutRolePolicy
-                  - iam:AddRoleToInstanceProfile
-                  - iam:DetachRolePolicy
-                  - iam:DeleteRolePolicy
-                  - iam:ListRolePolicies
-                  - iam:GetRolePolicy
+                  - iam:*
                 Effect: Allow
                 Resource: '*'
             Version: '2012-10-17'
-          PolicyName: cloudformation-iam-access
-        - PolicyDocument:
-            Statement:
-              - Action:
-                  - cloudformation:CreateStack
-                  - cloudformation:DescribeStacks
-                  - cloudformation:DeleteStack
-                  - cloudformation:UpdateStack
-                  - cloudformation:CreateChangeSet
-                  - cloudformation:ExecuteChangeSet
-                  - cloudformation:DeleteChangeSet
-                  - cloudformation:DescribeChangeSet
-                  - cloudformation:SetStackPolicy
-                Effect: Allow
-                Resource: '*'
-            Version: '2012-10-17'
-          PolicyName: cloudformation-access
-      RoleName: !Sub '${AWS::StackName}-codebuild-deploy-cfn-service-role'
+          PolicyName: iam-access
+      RoleName: !Sub '${AWS::StackName}-cloudformation-deploy'
     Type: AWS::IAM::Role
   CodePipelinePipeline:
     Properties:
@@ -149,19 +89,22 @@ Resources:
           Name: Source
         - Actions:
             - ActionTypeId:
-                Category: Build
+                Category: Deploy
                 Owner: AWS
-                Provider: CodeBuild
+                Provider: CloudFormation
                 Version: 1
               Configuration:
-                ProjectName: !Ref 'CodeBuildDeployProject'
+                ActionMode: CREATE_UPDATE
+                Capabilities: CAPABILITY_NAMED_IAM
+                RoleArn: !GetAtt 'CloudformationRole.Arn'
+                StackName: !Ref 'StackName'
+                TemplateConfiguration: !Sub 'source-zip::${TemplateConfigurationName}'
+                TemplatePath: !Sub 'source-zip::${TemplateName}'
               InputArtifacts:
                 - Name: source-zip
-              Name: codebuild-deploy-cfn
-              OutputArtifacts:
-                - Name: built-zip
+              Name: cloudformation-deploy-cfn
               RunOrder: 1
-          Name: Build
+          Name: Deploy
     Type: AWS::CodePipeline::Pipeline
   CodePipelineServiceRole:
     Properties:
@@ -194,19 +137,16 @@ Resources:
               - Action: iam:PassRole
                 Effect: Allow
                 Resource:
-                  - !GetAtt 'CodeBuildDeployServiceRole.Arn'
+                  - !GetAtt 'CloudformationRole.Arn'
             Version: '2012-10-17'
           PolicyName: !Sub 'codepipeline-passrole-access-${AWS::StackName}-default'
         - PolicyDocument:
             Statement:
               - Action:
-                  - codebuild:StartBuild
-                  - codebuild:StopBuild
-                  - codebuild:BatchGetBuilds
+                  - cloudformation:*
                 Effect: Allow
-                Resource:
-                  - !GetAtt 'CodeBuildDeployProject.Arn'
+                Resource: '*'
             Version: '2012-10-17'
-          PolicyName: !Sub 'codepipeline-build-access-${AWS::StackName}-default'
+          PolicyName: cloudformation-access
       RoleName: !Sub 'codepipeline-service-role-${AWS::StackName}-default'
     Type: AWS::IAM::Role
