@@ -99,6 +99,15 @@ Resources:
                   - '*'
             Version: '2012-10-17'
           PolicyName: access-ecr
+        - PolicyDocument:
+            Statement:
+              - Action:
+                  - ssm:*
+                Effect: Allow
+                Resource:
+                  - '*'
+            Version: '2012-10-17'
+          PolicyName: access-ssm
       RoleName: !Sub '${AWS::StackName}-codebuild-build-docker-service-role'
     Type: AWS::IAM::Role
   CodeBuildCfnDeployProject:
@@ -120,6 +129,7 @@ Resources:
       Name: !Sub '${AWS::StackName}-deploy-cfn-codebuild'
       ServiceRole: !GetAtt 'CodeBuildCfnDeployRole.Arn'
       Source:
+        BuildSpec: infrastructure/buildspec.yml
         Type: CODEPIPELINE
     Type: AWS::CodeBuild::Project
   CodeBuildCfnDeployRole:
@@ -251,7 +261,7 @@ Resources:
                 - Name: source-zip
               Name: codebuild-cfn-deploy
               OutputArtifacts:
-                - Name: built-zip
+                - Name: template
               RunOrder: 1
           Name: Deploy
     Type: AWS::CodePipeline::Pipeline
